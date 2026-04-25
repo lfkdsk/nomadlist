@@ -31,7 +31,7 @@
           )
           .join("")}
         <div class="spacer"></div>
-        <div class="meta">${data.length.toLocaleString()} 个县级行政区 · 数据源 guxiang.app</div>
+        <div class="meta">${data.length.toLocaleString()} 条记录</div>
       </nav>`;
     document.body.insertAdjacentHTML("afterbegin", html);
   }
