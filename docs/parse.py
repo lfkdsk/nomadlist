@@ -1,6 +1,6 @@
 """Parse result.txt (scraped HTML blobs) into a structured JSON dataset.
 
-Output: viz/data.js  -- a JS file that exposes `window.NOMAD_DATA = [...]`,
+Output: docs/data.js  -- a JS file that exposes `window.NOMAD_DATA = [...]`,
 loadable by the static visualization pages without a server.
 """
 
@@ -11,7 +11,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "result.txt")
-OUT = os.path.join(ROOT, "viz", "data.js")
+OUT = os.path.join(ROOT, "docs", "data.js")
 
 
 def short_province(name):

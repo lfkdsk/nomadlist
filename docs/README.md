@@ -2,11 +2,13 @@
 
 把仓库里抓回来的 `result.txt`（来自 [guxiang.app](https://guxiang.app)）解析成结构化数据，并提供三个**纯静态 HTML** 页面用于浏览。
 
+GitHub Pages 部署：仓库 Settings → Pages → Source 选 `main` 分支 + `/docs` 目录，几秒后即可访问 `https://<owner>.github.io/nomadlist/`。
+
 ## 文件
 
 ```
-viz/
-├── parse.py        # 解析 ../result.txt → data.js
+docs/
+├── parse.py        # 解析 ../result.txt → data.js（部署时已生成，无需重跑）
 ├── data.js         # 由 parse.py 生成（window.NOMAD_DATA）
 ├── common.js       # 共享 helpers（导航 / 颜色 / 格式化）
 ├── style.css       # 共享暗色样式
@@ -20,14 +22,14 @@ viz/
 1. 重新生成数据（已经有 `data.js` 时可跳过）：
 
    ```bash
-   python3 viz/parse.py
+   python3 docs/parse.py
    ```
 
 2. 直接用浏览器打开（无需服务端）：
 
    ```bash
-   open viz/index.html        # macOS
-   xdg-open viz/index.html    # Linux
+   open docs/index.html        # macOS
+   xdg-open docs/index.html    # Linux
    ```
 
    也可以挂个简易服务器：
