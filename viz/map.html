@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nomad Atlas · Map</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .leaflet-popup-content-wrapper {
+      background: #161b22;
+      color: #e6edf3;
+      border: 1px solid #2a313c;
+    }
+    .leaflet-popup-tip { background: #161b22; }
+    .leaflet-popup-content { margin: 10px 14px; font-size: 12px; line-height: 1.5; }
+    .leaflet-popup-content .title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+    .leaflet-popup-content .row { display: flex; gap: 8px; }
+    .leaflet-popup-content .k { color: #8b949e; min-width: 64px; }
+    .leaflet-container { background: #0a0c10; }
+    .leaflet-control-attribution { background: rgba(0,0,0,0.5) !important; color: #8b949e !important; }
+    .leaflet-control-attribution a { color: #8b949e !important; }
+    .map-legend {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      z-index: 500;
+    }
+    .map-stats {
+      position: absolute;
+      top: 12px;
+      right: 24px;
+      z-index: 500;
+      background: rgba(22, 27, 34, 0.9);
+      border: 1px solid #2a313c;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .map-stats b { color: #e6edf3; }
+    .map-wrap { position: relative; }
+  </style>
+</head>
+<body>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+
+  <div class="container">
+    <h1>地图视图</h1>
+    <p class="subtitle">每个圆点代表一个县级行政区。可切换指标着色 / 调整大小、按省份过滤、用筛选器看哪些县同时满足多个条件。</p>
+
+    <div class="controls">
+      <label>指标：
+        <select id="metric">
+          <option value="gdp">GDP</option>
+          <option value="population">人口</option>
+          <option value="income">城镇可支配收入</option>
+          <option value="temp_avg">年均温度</option>
+          <option value="humidity">年均湿度</option>
+          <option value="winter_days">冬日天数</option>
+          <option value="summer_days">夏日天数</option>
+          <option value="rainy_days">下雨天数</option>
+          <option value="sunny_days">晴天天数</option>
+        </select>
+      </label>
+      <label>省份：
+        <select id="province"><option value="">全部</option></select>
+      </label>
+      <label>层级：
+        <select id="level">
+          <option value="">全部</option>
+          <option value="county">仅县级</option>
+          <option value="prefecture">仅地级市</option>
+        </select>
+      </label>
+      <span class="chip" data-flag="starbucks">星巴克</span>
+      <span class="chip" data-flag="mcdonalds">麦当劳</span>
+      <span class="chip" data-flag="kfc">肯德基</span>
+      <span class="chip" data-flag="gym">健身房</span>
+      <span class="chip" data-flag="airport">机场</span>
+      <span class="chip" data-flag="rail">高铁</span>
+      <span class="chip" data-flag="has_heating">集中供暖</span>
+    </div>
+
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div class="map-stats" id="stats"></div>
+      <div class="map-legend legend" id="legend"></div>
+    </div>
+  </div>
+
+  <script>
+    NOMAD.buildNav("map");
+    const D = NOMAD.data;
+    const fmt = NOMAD.fmt;
+
+    const METRIC_LABEL = {
+      gdp: ["GDP", (v) => fmt.gdp(v)],
+      population: ["人口", (v) => fmt.pop(v)],
+      income: ["城镇可支配收入", (v) => fmt.income(v)],
+      temp_avg: ["年均温度", (v) => v.toFixed(1) + " °C"],
+      humidity: ["年均湿度", (v) => v.toFixed(1) + " %"],
+      winter_days: ["冬日天数", (v) => Math.round(v) + " 天"],
+      summer_days: ["夏日天数", (v) => Math.round(v) + " 天"],
+      rainy_days: ["下雨天数", (v) => Math.round(v) + " 天"],
+      sunny_days: ["晴天天数", (v) => Math.round(v) + " 天"],
+    };
+
+    // Build province dropdown.
+    const provinces = Array.from(new Set(D.map((r) => r.province_short).filter(Boolean))).sort();
+    const provSel = document.getElementById("province");
+    provinces.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p; o.textContent = p; provSel.appendChild(o);
+    });
+
+    // Filter chips: tri-state? Keep simple: on/off (when on, require true).
+    const flags = {};
+    document.querySelectorAll(".chip[data-flag]").forEach((el) => {
+      el.addEventListener("click", () => {
+        el.classList.toggle("on");
+        flags[el.dataset.flag] = el.classList.contains("on");
+        render();
+      });
+    });
+
+    // Map setup.
+    const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([35.5, 105], 4);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; OpenStreetMap &copy; CARTO',
+      subdomains: "abcd",
+      maxZoom: 19,
+    }).addTo(map);
+
+    let layer = L.layerGroup().addTo(map);
+
+    document.getElementById("metric").addEventListener("change", render);
+    provSel.addEventListener("change", render);
+    document.getElementById("level").addEventListener("change", render);
+
+    function passes(r) {
+      if (provSel.value && r.province_short !== provSel.value) return false;
+      const lv = document.getElementById("level").value;
+      if (lv && r.admin_level !== lv) return false;
+      for (const [k, v] of Object.entries(flags)) {
+        if (!v) continue;
+        if (k === "rail") { if (!r.rail) return false; }
+        else if (r[k] !== true) return false;
+      }
+      return true;
+    }
+
+    function popupHtml(r, metric) {
+      const [label, format] = METRIC_LABEL[metric];
+      const rows = [
+        ["所属", `${r.province || "—"} · ${r.parent_city || "—"}`],
+        ["GDP", fmt.gdp(r.gdp)],
+        ["人口", fmt.pop(r.population)],
+        ["收入", fmt.income(r.income)],
+        ["年均温", r.temp_avg == null ? "—" : r.temp_avg + " °C"],
+        ["湿度", r.humidity == null ? "—" : r.humidity + " %"],
+        ["夏/冬", `${fmt.int(r.summer_days)} / ${fmt.int(r.winter_days)} 天`],
+        ["品牌", `星${fmt.yn(r.starbucks)} 麦${fmt.yn(r.mcdonalds)} 肯${fmt.yn(r.kfc)} 健身${fmt.yn(r.gym)}`],
+        ["交通", `高铁 ${r.rail || "—"} · 机场 ${fmt.yn(r.airport)} · 供暖 ${fmt.yn(r.has_heating)}`],
+      ];
+      return `<div class="title">${r.name}</div>
+        <div class="row"><div class="k">${label}</div><div><b>${r[metric] != null ? format(r[metric]) : "—"}</b></div></div>
+        ${rows.map(([k, v]) => `<div class="row"><div class="k">${k}</div><div>${v}</div></div>`).join("")}`;
+    }
+
+    function render() {
+      const metric = document.getElementById("metric").value;
+      layer.clearLayers();
+
+      const visible = D.filter((r) => r.lng && r.lat && passes(r));
+      const vals = visible.map((r) => r[metric]).filter((v) => v != null);
+      const scale = NOMAD.quantileScale(vals);
+      const palette = (metric === "temp_avg") ? NOMAD.coolwarm : NOMAD.viridis;
+
+      visible.forEach((r) => {
+        const v = r[metric];
+        const t = v == null ? null : Math.max(0, Math.min(1, (v - scale.lo) / (scale.hi - scale.lo)));
+        const color = v == null ? "#555" : palette(t);
+        const radius = v == null ? 3 : 3 + Math.sqrt(t * 60);
+        const m = L.circleMarker([r.lat, r.lng], {
+          radius,
+          color: "#0a0c10",
+          weight: 0.6,
+          fillColor: color,
+          fillOpacity: v == null ? 0.25 : 0.78,
+        });
+        m.bindPopup(popupHtml(r, metric));
+        m.bindTooltip(r.name, { className: "nomad-tooltip" });
+        layer.addLayer(m);
+      });
+
+      // Legend.
+      const [label, format] = METRIC_LABEL[metric];
+      const stops = 5;
+      const legendRows = [];
+      for (let i = 0; i < stops; i++) {
+        const t = i / (stops - 1);
+        const v = scale.lo + (scale.hi - scale.lo) * t;
+        legendRows.push(`<div class="row"><span class="swatch" style="background:${palette(t)}"></span>${format(v)}</div>`);
+      }
+      document.getElementById("legend").innerHTML = `<div style="font-weight:600;margin-bottom:4px">${label}</div>${legendRows.join("")}<div style="color:#8b949e;margin-top:4px;font-size:11px">5–95 percentile</div>`;
+
+      // Stats panel.
+      document.getElementById("stats").innerHTML =
+        `当前显示 <b>${visible.length.toLocaleString()}</b> / ${D.length.toLocaleString()} 个县`;
+    }
+
+    render();
+  </script>
+</body>
+</html>

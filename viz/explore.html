@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nomad Atlas · Explore</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+
+  <div class="container">
+    <h1>城市浏览</h1>
+    <p class="subtitle">2,200+ 个县级行政区可全文搜索 · 排序 · 多条件筛选。点击表头排序，再点切换升降。</p>
+
+    <div class="controls">
+      <input type="search" id="q" placeholder="搜索 城市名 / 省份 / 上级城市 …" style="min-width:260px" />
+      <label>省份：
+        <select id="province"><option value="">全部</option></select>
+      </label>
+      <label>层级：
+        <select id="level">
+          <option value="">全部</option>
+          <option value="county">仅县级</option>
+          <option value="prefecture">仅地级市</option>
+        </select>
+      </label>
+      <span class="chip" data-flag="starbucks">★ 星巴克</span>
+      <span class="chip" data-flag="mcdonalds">★ 麦当劳</span>
+      <span class="chip" data-flag="kfc">★ 肯德基</span>
+      <span class="chip" data-flag="gym">★ 健身房</span>
+      <span class="chip" data-flag="airport">★ 机场</span>
+      <span class="chip" data-flag="rail">★ 高铁</span>
+      <span class="chip" data-flag="has_heating">★ 集中供暖</span>
+      <span id="count" style="color:#8b949e;margin-left:auto;font-size:12px"></span>
+    </div>
+
+    <div class="panel" style="padding: 0; overflow: auto;">
+      <table class="cities" id="tbl">
+        <thead><tr id="theadrow"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="pager"></div>
+  </div>
+
+  <script>
+    NOMAD.buildNav("explore");
+    const D = NOMAD.data;
+    const fmt = NOMAD.fmt;
+
+    // Column definitions: key, label, type ('str'|'num'|'bool'|'rail'), formatter
+    const COLS = [
+      { k: "name", label: "县市", t: "str", w: 180, render: (v, r) => `<div><b>${v}</b><div style="color:#8b949e;font-size:11px">${r.parent_city || ""}</div></div>` },
+      { k: "province_short", label: "省份", t: "str", w: 70 },
+      { k: "gdp", label: "GDP (亿)", t: "num", cls: "num", render: (v) => v == null ? "—" : v.toFixed(1) },
+      { k: "population", label: "人口 (万)", t: "num", cls: "num", render: (v) => v == null ? "—" : v.toFixed(1) },
+      { k: "income", label: "可支配收入 (元)", t: "num", cls: "num", render: (v) => v == null ? "—" : v.toLocaleString() },
+      { k: "temp_avg", label: "年均温", t: "num", cls: "num", render: (v) => v == null ? "—" : v.toFixed(1) + "°" },
+      { k: "humidity", label: "湿度", t: "num", cls: "num", render: (v) => v == null ? "—" : v.toFixed(0) + "%" },
+      { k: "summer_days", label: "夏日", t: "num", cls: "num", render: (v) => v == null ? "—" : Math.round(v) },
+      { k: "winter_days", label: "冬日", t: "num", cls: "num", render: (v) => v == null ? "—" : Math.round(v) },
+      { k: "starbucks", label: "星", t: "bool" },
+      { k: "mcdonalds", label: "麦", t: "bool" },
+      { k: "kfc", label: "肯", t: "bool" },
+      { k: "gym", label: "健", t: "bool" },
+      { k: "rail", label: "高铁", t: "rail", render: (v) => v ? `<span class="yes">${v}</span>` : "—" },
+      { k: "airport", label: "机场", t: "bool" },
+      { k: "has_heating", label: "供暖", t: "bool" },
+      { k: "drive_time", label: "驾车 (min)", t: "num", cls: "num", render: (v) => v == null ? "—" : Math.round(v) },
+    ];
+
+    let sortKey = "gdp";
+    let sortDir = -1; // -1 desc, 1 asc
+    let page = 0;
+    const PAGE_SIZE = 50;
+    const flags = {};
+
+    // Header.
+    const trh = document.getElementById("theadrow");
+    COLS.forEach((c) => {
+      const th = document.createElement("th");
+      th.textContent = c.label;
+      th.style.width = (c.w || "") && c.w + "px";
+      th.dataset.k = c.k;
+      th.addEventListener("click", () => {
+        if (sortKey === c.k) sortDir = -sortDir;
+        else { sortKey = c.k; sortDir = c.t === "str" ? 1 : -1; }
+        page = 0;
+        render();
+      });
+      trh.appendChild(th);
+    });
+
+    // Province filter.
+    const provinces = Array.from(new Set(D.map((r) => r.province_short).filter(Boolean))).sort();
+    const provSel = document.getElementById("province");
+    provinces.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p; o.textContent = p; provSel.appendChild(o);
+    });
+
+    // Wire up controls.
+    document.querySelectorAll(".chip[data-flag]").forEach((el) => {
+      el.addEventListener("click", () => {
+        el.classList.toggle("on");
+        flags[el.dataset.flag] = el.classList.contains("on");
+        page = 0;
+        render();
+      });
+    });
+    document.getElementById("q").addEventListener("input", () => { page = 0; render(); });
+    provSel.addEventListener("change", () => { page = 0; render(); });
+    document.getElementById("level").addEventListener("change", () => { page = 0; render(); });
+
+    function applyFilters() {
+      const q = document.getElementById("q").value.trim().toLowerCase();
+      const prov = provSel.value;
+      const lv = document.getElementById("level").value;
+      return D.filter((r) => {
+        if (prov && r.province_short !== prov) return false;
+        if (lv && r.admin_level !== lv) return false;
+        for (const [k, v] of Object.entries(flags)) {
+          if (!v) continue;
+          if (k === "rail") { if (!r.rail) return false; }
+          else if (r[k] !== true) return false;
+        }
+        if (!q) return true;
+        const hay = `${r.name} ${r.province} ${r.parent_city} ${r.province_short}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    function compare(a, b) {
+      const va = a[sortKey], vb = b[sortKey];
+      // Send nulls to the bottom regardless of direction.
+      const an = va == null, bn = vb == null;
+      if (an && bn) return 0;
+      if (an) return 1;
+      if (bn) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
+      // Booleans: true > false
+      if (typeof va === "boolean") return ((va ? 1 : 0) - (vb ? 1 : 0)) * sortDir;
+      return String(va).localeCompare(String(vb), "zh-Hans-CN") * sortDir;
+    }
+
+    function render() {
+      const filtered = applyFilters();
+      filtered.sort(compare);
+      document.getElementById("count").textContent =
+        `共 ${filtered.length.toLocaleString()} 条 · 排序 ${COLS.find((c) => c.k === sortKey).label} ${sortDir === -1 ? "↓" : "↑"}`;
+
+      // Update header arrows.
+      document.querySelectorAll("#theadrow th").forEach((th) => {
+        th.innerHTML = COLS.find((c) => c.k === th.dataset.k).label +
+          (th.dataset.k === sortKey ? `<span class="arrow"> ${sortDir === -1 ? "↓" : "↑"}</span>` : "");
+      });
+
+      const start = page * PAGE_SIZE;
+      const slice = filtered.slice(start, start + PAGE_SIZE);
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = slice.map((r) => {
+        return "<tr>" + COLS.map((c) => {
+          const v = r[c.k];
+          let html;
+          if (c.render) html = c.render(v, r);
+          else if (c.t === "bool") html = v == null ? `<span class="no">—</span>` : (v ? `<span class="yes">✓</span>` : `<span class="no">·</span>`);
+          else html = v == null ? "—" : v;
+          return `<td class="${c.cls || ""}">${html}</td>`;
+        }).join("") + "</tr>";
+      }).join("");
+
+      // Pager.
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      const p = document.getElementById("pager");
+      p.innerHTML = `
+        <button id="first" ${page === 0 ? "disabled" : ""}>« 第一页</button>
+        <button id="prev" ${page === 0 ? "disabled" : ""}>‹ 上一页</button>
+        <span>第 ${page + 1} / ${totalPages} 页</span>
+        <button id="next" ${page >= totalPages - 1 ? "disabled" : ""}>下一页 ›</button>
+        <button id="last" ${page >= totalPages - 1 ? "disabled" : ""}>最后一页 »</button>`;
+      document.getElementById("first").onclick = () => { page = 0; render(); };
+      document.getElementById("prev").onclick = () => { page = Math.max(0, page - 1); render(); };
+      document.getElementById("next").onclick = () => { page = Math.min(totalPages - 1, page + 1); render(); };
+      document.getElementById("last").onclick = () => { page = totalPages - 1; render(); };
+    }
+
+    render();
+  </script>
+</body>
+</html>
