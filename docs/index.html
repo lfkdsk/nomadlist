@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nomad Atlas · Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+  <div class="container">
+    <h1>中国市县一览</h1>
+    <p class="subtitle">2,200+ 条记录（地级市 + 县级行政区混合）的静态可视化。基础 / 气候 / 商业 / 交通四组指标均来自 2022 年公开数据。</p>
+
+    <div class="kpi-grid" id="kpis"></div>
+
+    <h2>分布概览</h2>
+    <div class="grid">
+      <div class="panel">
+        <h3>各省份覆盖数量</h3>
+        <div class="sub">下钻每个省份在数据集中包含的县级行政区数量</div>
+        <div id="chart-province" class="chart tall"></div>
+      </div>
+      <div class="panel">
+        <h3>气候散点：年均温 × 年均湿度</h3>
+        <div class="sub">点大小 = 人口；颜色 = 年均温（蓝→红）。把鼠标移到点上看城市详情。</div>
+        <div id="chart-climate" class="chart tall"></div>
+      </div>
+    </div>
+
+    <h2>经济与人口</h2>
+    <div class="grid">
+      <div class="panel">
+        <h3>GDP Top 30 (县级行政区)</h3>
+        <div class="sub">仅县/县级市/市辖区，地级市汇总数据被排除；单位 亿元</div>
+        <div id="chart-gdp" class="chart tall"></div>
+      </div>
+      <div class="panel">
+        <h3>人口 Top 30 (县级行政区)</h3>
+        <div class="sub">仅县级；单位 万人</div>
+        <div id="chart-pop" class="chart tall"></div>
+      </div>
+    </div>
+
+    <h2>商业 & 基础设施覆盖</h2>
+    <div class="grid">
+      <div class="panel">
+        <h3>四大连锁覆盖率</h3>
+        <div class="sub">星巴克 / 麦当劳 / 肯德基 / 健身房 — 县级行政区内是否存在</div>
+        <div id="chart-brands" class="chart"></div>
+      </div>
+      <div class="panel">
+        <h3>集中供暖 / 高铁 / 机场 覆盖</h3>
+        <div class="sub">按县计数。高铁取“途径高铁”非空。</div>
+        <div id="chart-infra" class="chart"></div>
+      </div>
+      <div class="panel">
+        <h3>各省份品牌覆盖率</h3>
+        <div class="sub">堆叠条形图：各省份内拥有星巴克 / 麦当劳 / 肯德基的县比例</div>
+        <div id="chart-brand-by-province" class="chart tall"></div>
+      </div>
+      <div class="panel">
+        <h3>气候四季</h3>
+        <div class="sub">各省份预期夏日 / 冬日天数中位数（25–75 区间用阴影表示）</div>
+        <div id="chart-seasons" class="chart tall"></div>
+      </div>
+    </div>
+
+    <p class="subtitle" style="margin-top:32px">字段缺失时显示为 — 。</p>
+  </div>
+
+  <script>
+    NOMAD.buildNav("index");
+    const D = NOMAD.data;
+    const fmt = NOMAD.fmt;
+
+    // ---------- KPIs ----------
+    function pct(arr) {
+      const known = arr.filter((v) => v === true || v === false);
+      if (!known.length) return null;
+      return (100 * known.filter((v) => v === true).length) / known.length;
+    }
+    const provinces = new Set(D.map((r) => r.province_short).filter(Boolean));
+    const avgTemp = D.reduce((s, r) => s + (r.temp_avg || 0), 0) /
+      D.filter((r) => r.temp_avg != null).length;
+    const avgHum = D.reduce((s, r) => s + (r.humidity || 0), 0) /
+      D.filter((r) => r.humidity != null).length;
+    const sumGdp = D.reduce((s, r) => s + (r.gdp || 0), 0);
+    const sumPop = D.reduce((s, r) => s + (r.population || 0), 0);
+    const kpis = [
+      { label: "县级行政区", value: D.length.toLocaleString(), hint: `覆盖 ${provinces.size} 个省级行政区` },
+      { label: "GDP 合计", value: (sumGdp / 1e4).toFixed(2) + " 万亿元", hint: "已抓取数据求和（仅供参考）" },
+      { label: "人口合计", value: (sumPop / 1e4).toFixed(2) + " 亿人", hint: "已抓取数据求和" },
+      { label: "年均温度", value: avgTemp.toFixed(1) + " °C", hint: "全样本均值" },
+      { label: "年均湿度", value: avgHum.toFixed(1) + " %", hint: "全样本均值" },
+      { label: "有星巴克的县", value: fmt.pct(pct(D.map((r) => r.starbucks))), hint: "覆盖率" },
+      { label: "有高铁的县", value: fmt.pct(100 * D.filter((r) => r.rail).length / D.length), hint: "途径任一高铁线" },
+      { label: "有机场的县", value: fmt.pct(pct(D.map((r) => r.airport))), hint: "覆盖率" },
+    ];
+    document.getElementById("kpis").innerHTML = kpis
+      .map((k) => `<div class="kpi"><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="hint">${k.hint}</div></div>`)
+      .join("");
+
+    const COMMON_TT = {
+      backgroundColor: "#1c222b",
+      borderColor: "#2a313c",
+      textStyle: { color: "#e6edf3" },
+    };
+    const COMMON_GRID = { left: 80, right: 24, top: 32, bottom: 36 };
+
+    // ---------- Province bar ----------
+    (function () {
+      const counts = {};
+      D.forEach((r) => { if (r.province_short) counts[r.province_short] = (counts[r.province_short] || 0) + 1; });
+      const sorted = Object.entries(counts).sort((a, b) => a[1] - b[1]);
+      const chart = echarts.init(document.getElementById("chart-province"), "dark", { renderer: "canvas" });
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "axis", axisPointer: { type: "shadow" } },
+        grid: { ...COMMON_GRID, left: 70 },
+        xAxis: { type: "value", name: "县级数" },
+        yAxis: { type: "category", data: sorted.map((d) => d[0]), axisLabel: { fontSize: 11 } },
+        series: [{
+          type: "bar",
+          data: sorted.map((d) => d[1]),
+          itemStyle: { color: NOMAD.viridis(0.6), borderRadius: [0, 4, 4, 0] },
+          label: { show: true, position: "right", color: "#8b949e", fontSize: 11 },
+        }],
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+
+    // ---------- Climate scatter ----------
+    (function () {
+      const valid = D.filter((r) => r.temp_avg != null && r.humidity != null);
+      const tScale = NOMAD.quantileScale(valid.map((r) => r.temp_avg));
+      const data = valid.map((r) => ({
+        value: [r.humidity, r.temp_avg, r.population || 1, r.name, r.province_short, r.winter_days, r.summer_days],
+        itemStyle: { color: NOMAD.coolwarm((r.temp_avg - tScale.lo) / (tScale.hi - tScale.lo)) },
+      }));
+      const chart = echarts.init(document.getElementById("chart-climate"), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: {
+          ...COMMON_TT,
+          formatter: (p) => {
+            const [h, t, pop, name, prov, win, sum] = p.data.value;
+            return `<div class="tooltip-card"><div class="title">${name} <span style="color:#8b949e">· ${prov}</span></div>
+              年均温 <b>${t}</b> °C · 年均湿度 <b>${h}</b> %<br/>
+              人口 ${fmt.pop(pop)} · 夏日 ${fmt.int(sum)} 天 · 冬日 ${fmt.int(win)} 天</div>`;
+          },
+        },
+        grid: COMMON_GRID,
+        xAxis: { name: "年均湿度 (%)", min: 30, max: 100, splitLine: { lineStyle: { opacity: 0.1 } } },
+        yAxis: { name: "年均温 (°C)", min: -5, max: 30, splitLine: { lineStyle: { opacity: 0.1 } } },
+        series: [{
+          type: "scatter",
+          data,
+          symbolSize: (v) => Math.min(28, 4 + Math.sqrt(v[2]) / 2),
+          itemStyle: { opacity: 0.7, borderColor: "rgba(0,0,0,0.3)" },
+          large: true,
+          largeThreshold: 500,
+        }],
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+
+    // ---------- Top 30 GDP ----------
+    function topNBar(elId, metricKey, unitFmt, color, axisName) {
+      const top = D.filter((r) => r[metricKey] != null && r.admin_level === "county")
+        .sort((a, b) => b[metricKey] - a[metricKey])
+        .slice(0, 30)
+        .reverse();
+      const chart = echarts.init(document.getElementById(elId), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "axis", axisPointer: { type: "shadow" } },
+        grid: { ...COMMON_GRID, left: 110 },
+        xAxis: { type: "value", name: axisName },
+        yAxis: { type: "category", data: top.map((r) => r.name), axisLabel: { fontSize: 11 } },
+        series: [{
+          type: "bar",
+          data: top.map((r) => ({ value: r[metricKey], itemStyle: { color, borderRadius: [0, 4, 4, 0] } })),
+          label: { show: true, position: "right", color: "#8b949e", fontSize: 11, formatter: (p) => unitFmt(p.value) },
+        }],
+      });
+      window.addEventListener("resize", () => chart.resize());
+    }
+    topNBar("chart-gdp", "gdp", (v) => fmt.gdp(v), "#f0883e", "GDP (亿元)");
+    topNBar("chart-pop", "population", (v) => fmt.pop(v), "#58a6ff", "人口 (万)");
+
+    // ---------- Brand donut ----------
+    (function () {
+      const brands = [
+        { k: "starbucks", name: "星巴克" },
+        { k: "mcdonalds", name: "麦当劳" },
+        { k: "kfc", name: "肯德基" },
+        { k: "gym", name: "健身房" },
+      ];
+      const chart = echarts.init(document.getElementById("chart-brands"), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "item", formatter: "{b}: {c} ({d}%)" },
+        legend: { bottom: 0, textStyle: { color: "#8b949e" } },
+        series: brands.map((b, i) => {
+          const yes = D.filter((r) => r[b.k] === true).length;
+          const no = D.filter((r) => r[b.k] === false).length;
+          return {
+            name: b.name,
+            type: "pie",
+            radius: ["40%", "65%"],
+            center: [`${12.5 + i * 25}%`, "45%"],
+            label: { color: "#e6edf3", formatter: `${b.name}\n{d}%`, fontSize: 12 },
+            data: [
+              { value: yes, name: "有", itemStyle: { color: "#3fb950" } },
+              { value: no, name: "无", itemStyle: { color: "#30363d" } },
+            ],
+          };
+        }),
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+
+    // ---------- Infra donut ----------
+    (function () {
+      const series = [
+        { name: "集中供暖", yes: D.filter((r) => r.has_heating === true).length, no: D.filter((r) => r.has_heating === false).length, color: "#fac858" },
+        { name: "高铁途径", yes: D.filter((r) => r.rail).length, no: D.length - D.filter((r) => r.rail).length, color: "#73c0de" },
+        { name: "机场覆盖", yes: D.filter((r) => r.airport === true).length, no: D.filter((r) => r.airport === false).length, color: "#ee6666" },
+      ];
+      const chart = echarts.init(document.getElementById("chart-infra"), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "item", formatter: "{b}: {c} ({d}%)" },
+        legend: { bottom: 0, textStyle: { color: "#8b949e" } },
+        series: series.map((s, i) => ({
+          name: s.name,
+          type: "pie",
+          radius: ["40%", "65%"],
+          center: [`${16.6 + i * 33.3}%`, "45%"],
+          label: { color: "#e6edf3", formatter: `${s.name}\n{d}%`, fontSize: 12 },
+          data: [
+            { value: s.yes, name: "有", itemStyle: { color: s.color } },
+            { value: s.no, name: "无", itemStyle: { color: "#30363d" } },
+          ],
+        })),
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+
+    // ---------- Brand coverage by province ----------
+    (function () {
+      const byProv = {};
+      D.forEach((r) => {
+        const p = r.province_short;
+        if (!p) return;
+        if (!byProv[p]) byProv[p] = { count: 0, sb: 0, mc: 0, kfc: 0 };
+        byProv[p].count++;
+        if (r.starbucks) byProv[p].sb++;
+        if (r.mcdonalds) byProv[p].mc++;
+        if (r.kfc) byProv[p].kfc++;
+      });
+      const provs = Object.keys(byProv).sort((a, b) => byProv[b].kfc / byProv[b].count - byProv[a].kfc / byProv[a].count);
+      const chart = echarts.init(document.getElementById("chart-brand-by-province"), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => v.toFixed(1) + "%" },
+        legend: { textStyle: { color: "#8b949e" }, top: 0 },
+        grid: { ...COMMON_GRID, top: 36, left: 70 },
+        xAxis: { type: "value", name: "覆盖率 (%)", max: 100 },
+        yAxis: { type: "category", data: provs.slice().reverse(), axisLabel: { fontSize: 11 } },
+        series: [
+          { name: "肯德基", type: "bar", data: provs.slice().reverse().map((p) => +(100 * byProv[p].kfc / byProv[p].count).toFixed(1)), itemStyle: { color: "#ee6666" } },
+          { name: "麦当劳", type: "bar", data: provs.slice().reverse().map((p) => +(100 * byProv[p].mc / byProv[p].count).toFixed(1)), itemStyle: { color: "#fac858" } },
+          { name: "星巴克", type: "bar", data: provs.slice().reverse().map((p) => +(100 * byProv[p].sb / byProv[p].count).toFixed(1)), itemStyle: { color: "#3fb950" } },
+        ],
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+
+    // ---------- Seasons (summer/winter days) ----------
+    (function () {
+      function quantile(arr, q) {
+        if (!arr.length) return 0;
+        const i = (arr.length - 1) * q;
+        const lo = Math.floor(i), hi = Math.ceil(i);
+        return arr[lo] + (arr[hi] - arr[lo]) * (i - lo);
+      }
+      const byProv = {};
+      D.forEach((r) => {
+        if (!r.province_short) return;
+        if (!byProv[r.province_short]) byProv[r.province_short] = { sum: [], win: [] };
+        if (r.summer_days != null) byProv[r.province_short].sum.push(r.summer_days);
+        if (r.winter_days != null) byProv[r.province_short].win.push(r.winter_days);
+      });
+      Object.values(byProv).forEach((v) => { v.sum.sort((a, b) => a - b); v.win.sort((a, b) => a - b); });
+      const provs = Object.keys(byProv).sort((a, b) => quantile(byProv[a].sum, 0.5) - quantile(byProv[b].sum, 0.5));
+      const sumMed = provs.map((p) => +quantile(byProv[p].sum, 0.5).toFixed(0));
+      const winMed = provs.map((p) => +quantile(byProv[p].win, 0.5).toFixed(0));
+      const chart = echarts.init(document.getElementById("chart-seasons"), "dark");
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { ...COMMON_TT, trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => v + " 天" },
+        legend: { textStyle: { color: "#8b949e" }, top: 0 },
+        grid: { ...COMMON_GRID, top: 36, left: 70 },
+        xAxis: { type: "value", name: "中位数（天/年）" },
+        yAxis: { type: "category", data: provs, axisLabel: { fontSize: 11 } },
+        series: [
+          { name: "夏日", type: "bar", data: sumMed, itemStyle: { color: "#f0883e" } },
+          { name: "冬日", type: "bar", data: winMed, itemStyle: { color: "#58a6ff" } },
+        ],
+      });
+      window.addEventListener("resize", () => chart.resize());
+    })();
+  </script>
+</body>
+</html>
