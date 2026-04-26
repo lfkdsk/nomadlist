@@ -1,6 +1,4 @@
-# Nomad Atlas — 中国小县城静态可视化
-
-把仓库里 `result.txt` 解析成结构化数据，并提供三个**纯静态 HTML** 页面用于浏览。
+# Nomad Atlas — 中国数字游民可视化
 
 GitHub Pages 部署：仓库 Settings → Pages → Source 选 `main` 分支 + `/docs` 目录，几秒后即可访问 `https://<owner>.github.io/nomadlist/`。
 
